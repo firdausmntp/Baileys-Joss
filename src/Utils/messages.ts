@@ -601,6 +601,10 @@ export const generateWAMessageContent = async (
 				initiatedByMe: true
 			}
 		}
+	} else if (hasNonNullishProperty(message, 'album')) {
+		// Album messages are handled separately in sendMessage
+		// Return empty message here, actual processing happens in messages-send.ts
+		m = {}
 	} else {
 		m = await prepareWAMessageMedia(message, options)
 	}

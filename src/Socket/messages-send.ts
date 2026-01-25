@@ -1,9 +1,11 @@
 import NodeCache from '@cacheable/node-cache'
 import { Boom } from '@hapi/boom'
+import { randomBytes } from 'crypto'
 import { proto } from '../../WAProto/index.js'
 import { DEFAULT_CACHE_TTLS, WA_DEFAULT_EPHEMERAL } from '../Defaults'
 import type {
 	AnyMessageContent,
+	AlbumMediaContent,
 	MediaConnInfo,
 	MessageReceiptType,
 	MessageRelayOptions,
@@ -25,6 +27,9 @@ import {
 	generateMessageIDV2,
 	generateParticipantHashV2,
 	generateWAMessage,
+	generateWAMessageContent,
+	generateWAMessageFromContent,
+	getContentType,
 	getStatusCodeForMediaRetry,
 	getUrlFromDirectPath,
 	getWAUploadToServer,
@@ -1030,6 +1035,62 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 				;(stanza.content as BinaryNode[]).push(...additionalNodes)
 			}
 
+			// Add biz node for interactive/button/list messages
+			// This is required for WhatsApp to recognize the message as interactive
+			const content = normalizeMessageContent(message)
+			const contentType = getContentType(content)
+			if (
+				(isJidGroup(jid) || !isNewsletter) &&
+				(contentType === 'interactiveMessage' ||
+					contentType === 'buttonsMessage' ||
+					contentType === 'listMessage')
+			) {
+				const bizNode: BinaryNode = { tag: 'biz', attrs: {}, content: [] }
+
+				if (contentType === 'interactiveMessage') {
+					// Native flow for interactive messages (buttons, etc)
+					bizNode.content = [
+						{
+							tag: 'interactive',
+							attrs: {
+								type: 'native_flow',
+								v: '1'
+							},
+							content: [
+								{
+									tag: 'native_flow',
+									attrs: { v: '9', name: 'mixed' }
+								}
+							]
+						}
+					]
+				} else if (contentType === 'listMessage') {
+					// List message type
+					bizNode.content = [
+						{
+							tag: 'list',
+							attrs: {
+								type: 'product_list',
+								v: '2'
+							}
+						}
+					]
+				} else if (contentType === 'buttonsMessage') {
+					// Buttons message type
+					bizNode.content = [
+						{
+							tag: 'buttons',
+							attrs: {
+								v: '1'
+							}
+						}
+					]
+				}
+
+				;(stanza.content as BinaryNode[]).push(bizNode)
+				logger.debug({ msgId, contentType }, 'added biz node for interactive message')
+			}
+
 			logger.debug({ msgId }, `sending message to ${participants.length} devices`)
 
 			await sendNode(stanza)
@@ -1218,7 +1279,77 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 							: 0
 						: disappearingMessagesInChat
 				await groupToggleEphemeral(jid, value)
+			} else if (typeof content === 'object' && 'album' in content && content.album) {
+				// Handle Album Messages (carousel of images/videos)
+				const { album, caption } = content as { album: AlbumMediaContent[]; caption?: string }
+				
+				// Set caption on first item if provided at top level
+				if (caption && album[0] && !album[0].caption) {
+					album[0].caption = caption
+				}
+				
+				// Create album parent message
+				const albumMsg = generateWAMessageFromContent(
+					jid,
+					{
+						albumMessage: {
+							expectedImageCount: album.filter(item => 'image' in item).length,
+							expectedVideoCount: album.filter(item => 'video' in item).length
+						}
+					},
+					{ userJid, messageId: generateMessageIDV2(sock.user?.id), ...options }
+				)
+				
+				// Send the parent album message
+				await relayMessage(jid, albumMsg.message!, {
+					messageId: albumMsg.key.id!
+				})
+				
+				// Send each media item with association to parent
+				for (let i = 0; i < album.length; i++) {
+					const item = album[i]
+					const mediaMsg = await generateWAMessage(jid, item as AnyMessageContent, {
+						logger,
+						userJid,
+						upload: waUploadToServer,
+						mediaCache: config.mediaCache,
+						options: config.options,
+						messageId: generateMessageIDV2(sock.user?.id),
+						...options
+					})
+					
+					// Add message association to link to parent album
+					if (mediaMsg.message) {
+						mediaMsg.message.messageContextInfo = {
+							messageSecret: randomBytes(32),
+							messageAssociation: {
+								associationType: 1,
+								parentMessageKey: albumMsg.key
+							}
+						}
+					}
+					
+					await relayMessage(jid, mediaMsg.message!, {
+						messageId: mediaMsg.key.id!
+					})
+					
+					// Small delay between items to prevent rate limiting
+					if (i < album.length - 1) {
+						await new Promise(resolve => setTimeout(resolve, 500))
+					}
+				}
+				
+				if (config.emitOwnEvents) {
+					process.nextTick(async () => {
+						await messageMutex.mutex(() => upsertMessage(albumMsg, 'append'))
+					})
+				}
+				
+				return albumMsg
 			} else {
+				// Check if AI message style is requested
+				const isAiMessage = typeof content === 'object' && 'ai' in content && content.ai === true
+				
 				const fullMsg = await generateWAMessage(jid, content, {
 					logger,
 					userJid,
@@ -1274,6 +1405,24 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 							event_type: 'creation'
 						}
 					} as BinaryNode)
+				}
+
+				// Add AI message style support
+				if (isAiMessage && fullMsg.message) {
+					const messageKey = getContentType(fullMsg.message)
+					if (messageKey && fullMsg.message[messageKey]) {
+						// Add AI indicator via messageContextInfo
+						fullMsg.message.messageContextInfo = {
+							...(fullMsg.message.messageContextInfo || {}),
+							messageSecret: randomBytes(32),
+							supportPayload: JSON.stringify({
+								version: 2,
+								is_ai_message: true,
+								should_show_system_message: true,
+								ticket_id: randomBytes(16).toString('hex')
+							})
+						}
+					}
 				}
 
 				await relayMessage(jid, fullMsg.message!, {

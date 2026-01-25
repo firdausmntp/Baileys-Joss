@@ -197,6 +197,26 @@ export type AnyMediaMessageContent = (
 	  } & Contextable)
 ) & { mimetype?: string } & Editable
 
+/** Single item in an album (image or video) */
+export type AlbumMediaContent =
+	| {
+			image: WAMediaUpload
+			caption?: string
+			jpegThumbnail?: string
+	  }
+	| {
+			video: WAMediaUpload
+			caption?: string
+			gifPlayback?: boolean
+			jpegThumbnail?: string
+	  }
+
+/** AI message style option */
+type AiMessageStyle = {
+	/** Show AI indicator on message */
+	ai?: boolean
+}
+
 export type ButtonReplyInfo = {
 	displayText: string
 	id: string
@@ -221,8 +241,9 @@ export type AnyRegularMessageContent = (
 			linkPreview?: WAUrlInfo | null
 	  } & Mentionable &
 			Contextable &
-			Editable)
-	| AnyMediaMessageContent
+			Editable &
+			AiMessageStyle)
+	| (AnyMediaMessageContent & AiMessageStyle)
 	| { event: EventMessageOptions }
 	| ({
 			poll: PollMessageOptions
@@ -262,6 +283,11 @@ export type AnyRegularMessageContent = (
 			businessOwnerJid?: string
 			body?: string
 			footer?: string
+	  }
+	| {
+			/** Send album of images/videos (carousel) */
+			album: AlbumMediaContent[]
+			caption?: string
 	  }
 	| SharePhoneNumber
 	| RequestPhoneNumber

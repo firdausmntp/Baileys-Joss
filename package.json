@@ -1,8 +1,8 @@
 {
   "name": "baileys-joss",
   "type": "module",
-  "version": "1.0.0",
-  "description": "WhatsApp Web API with Interactive Buttons, List Messages, LID/SenderPn Plotting - A feature-rich Baileys fork",
+  "version": "1.0.1",
+  "description": "WhatsApp Web API with Interactive Buttons, List Messages, Albums, AI Messages, Polls, LID/SenderPn Plotting - A feature-rich Baileys fork",
   "keywords": [
     "whatsapp",
     "whatsapp-api",
