@@ -176,6 +176,8 @@ export type AnyMediaMessageContent = (
 			image: WAMediaUpload
 			caption?: string
 			jpegThumbnail?: string
+			/** if set to true, will send image without compression (HD quality) */
+			hd?: boolean
 	  } & Mentionable &
 			Contextable &
 			WithDimensions)
@@ -186,6 +188,8 @@ export type AnyMediaMessageContent = (
 			jpegThumbnail?: string
 			/** if set to true, will send as a `video note` */
 			ptv?: boolean
+			/** if set to true, will send video without compression (HD quality) */
+			hd?: boolean
 	  } & Mentionable &
 			Contextable &
 			WithDimensions)
