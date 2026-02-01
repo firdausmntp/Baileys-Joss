@@ -37,6 +37,7 @@ import {
 	encodeSyncdPatch,
 	extractSyncdPatches,
 	generateProfilePicture,
+	generatePanoramaProfilePicture,
 	getHistoryMsg,
 	newLTHashState,
 	processSyncAction
@@ -292,6 +293,57 @@ export const makeChatsSocket = (config: SocketConfig) => {
 					tag: 'picture',
 					attrs: { type: 'image' },
 					content: img
+				}
+			]
+		})
+	}
+
+	/**
+	 * Update profile picture with panorama/wide image support
+	 * This allows setting a full-width image without cropping to square
+	 * @param jid - Your JID or group JID
+	 * @param content - The image to use
+	 * @param options - Panorama options
+	 */
+	const updatePanoramaProfilePicture = async (
+		jid: string,
+		content: WAMediaUpload,
+		options?: { maxWidth?: number; quality?: number }
+	) => {
+		let targetJid
+		if (!jid) {
+			throw new Boom(
+				'Illegal no-jid profile update. Please specify either your ID or the ID of the chat you wish to update'
+			)
+		}
+
+		if (jidNormalizedUser(jid) !== jidNormalizedUser(authState.creds.me!.id)) {
+			targetJid = jidNormalizedUser(jid)
+		} else {
+			targetJid = undefined
+		}
+
+		const { img, fullImg } = await generatePanoramaProfilePicture(content, options)
+		
+		// Send both the square preview and full panorama image
+		await query({
+			tag: 'iq',
+			attrs: {
+				to: S_WHATSAPP_NET,
+				type: 'set',
+				xmlns: 'w:profile:picture',
+				...(targetJid ? { target: targetJid } : {})
+			},
+			content: [
+				{
+					tag: 'picture',
+					attrs: { type: 'image' },
+					content: img
+				},
+				{
+					tag: 'picture',
+					attrs: { type: 'fullsize' },
+					content: fullImg
 				}
 			]
 		})
@@ -1211,6 +1263,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		fetchStatus,
 		fetchDisappearingDuration,
 		updateProfilePicture,
+		updatePanoramaProfilePicture,
 		removeProfilePicture,
 		updateProfileStatus,
 		updateProfileName,

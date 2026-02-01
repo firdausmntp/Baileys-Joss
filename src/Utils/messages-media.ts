@@ -132,7 +132,18 @@ const extractVideoThumb = async (
 		})
 	})
 
-export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | string, width = 32) => {
+export const extractImageThumb = async (
+	bufferOrFilePath: Readable | Buffer | string, 
+	widthOrHdMode: number | boolean = 32
+) => {
+	// Determine width based on parameter type
+	// If boolean true (HD mode), use larger width for higher quality thumbnail
+	// If boolean false or number, use specified width or default
+	const width = typeof widthOrHdMode === 'boolean' 
+		? (widthOrHdMode ? 320 : 32)  // HD mode: 320px, normal: 32px
+		: widthOrHdMode
+	const quality = typeof widthOrHdMode === 'boolean' && widthOrHdMode ? 85 : 50  // HD mode: 85% quality
+	
 	// TODO: Move entirely to sharp, removing jimp as it supports readable streams
 	// This will have positive speed and performance impacts as well as minimizing RAM usage.
 	if (bufferOrFilePath instanceof Readable) {
@@ -144,7 +155,7 @@ export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | st
 		const img = lib.sharp.default(bufferOrFilePath)
 		const dimensions = await img.metadata()
 
-		const buffer = await img.resize(width).jpeg({ quality: 50 }).toBuffer()
+		const buffer = await img.resize(width).jpeg({ quality }).toBuffer()
 		return {
 			buffer,
 			original: {
@@ -160,7 +171,7 @@ export const extractImageThumb = async (bufferOrFilePath: Readable | Buffer | st
 		}
 		const buffer = await jimp
 			.resize({ w: width, mode: lib.jimp.ResizeStrategy.BILINEAR })
-			.getBuffer('image/jpeg', { quality: 50 })
+			.getBuffer('image/jpeg', { quality })
 		return {
 			buffer,
 			original: dimensions
@@ -212,6 +223,111 @@ export const generateProfilePicture = async (
 
 	return {
 		img: await img
+	}
+}
+
+/**
+ * Generate a panorama/wide profile picture without cropping
+ * This allows setting a full-width image as profile picture
+ * @param mediaUpload - The image to use
+ * @param options - Options for panorama generation
+ */
+export const generatePanoramaProfilePicture = async (
+	mediaUpload: WAMediaUpload,
+	options?: { 
+		/** Maximum width for the panorama (default: 720) */
+		maxWidth?: number
+		/** Quality of the output JPEG (default: 80) */
+		quality?: number
+	}
+) => {
+	let buffer: Buffer
+
+	const { maxWidth = 720, quality = 80 } = options || {}
+
+	if (Buffer.isBuffer(mediaUpload)) {
+		buffer = mediaUpload
+	} else {
+		const { stream } = await getStream(mediaUpload)
+		buffer = await toBuffer(stream)
+	}
+
+	const lib = await getImageProcessingLibrary()
+	let img: Promise<Buffer>
+	let fullImg: Promise<Buffer>
+	
+	if ('sharp' in lib && typeof lib.sharp?.default === 'function') {
+		const sharpInstance = lib.sharp.default(buffer)
+		const metadata = await sharpInstance.metadata()
+		
+		const originalWidth = metadata.width || 640
+		const originalHeight = metadata.height || 640
+		
+		// Calculate new dimensions maintaining aspect ratio
+		const aspectRatio = originalWidth / originalHeight
+		let newWidth = originalWidth
+		let newHeight = originalHeight
+		
+		if (originalWidth > maxWidth) {
+			newWidth = maxWidth
+			newHeight = Math.round(maxWidth / aspectRatio)
+		}
+		
+		// Generate the full panorama image (for wide display)
+		fullImg = lib.sharp
+			.default(buffer)
+			.resize(newWidth, newHeight, { fit: 'inside' })
+			.jpeg({ quality })
+			.toBuffer()
+		
+		// Generate a cropped square preview (for thumbnail/circle view)
+		const size = Math.min(originalWidth, originalHeight)
+		img = lib.sharp
+			.default(buffer)
+			.resize(640, 640, { fit: 'cover', position: 'center' })
+			.jpeg({ quality: 50 })
+			.toBuffer()
+			
+	} else if ('jimp' in lib && typeof lib.jimp?.Jimp === 'function') {
+		const jimp = await (lib.jimp.Jimp as any).read(buffer)
+		const originalWidth = jimp.width
+		const originalHeight = jimp.height
+		
+		// Calculate dimensions
+		const aspectRatio = originalWidth / originalHeight
+		let newWidth = originalWidth
+		let newHeight = originalHeight
+		
+		if (originalWidth > maxWidth) {
+			newWidth = maxWidth
+			newHeight = Math.round(maxWidth / aspectRatio)
+		}
+		
+		// Full panorama
+		const panoramaJimp = jimp.clone()
+			.resize({ w: newWidth, h: newHeight, mode: lib.jimp.ResizeStrategy.BILINEAR })
+		fullImg = panoramaJimp.getBuffer('image/jpeg', { quality })
+		
+		// Square preview
+		const min = Math.min(originalWidth, originalHeight)
+		const cropped = jimp.crop({ 
+			x: Math.floor((originalWidth - min) / 2), 
+			y: Math.floor((originalHeight - min) / 2), 
+			w: min, 
+			h: min 
+		})
+		img = cropped
+			.resize({ w: 640, h: 640, mode: lib.jimp.ResizeStrategy.BILINEAR })
+			.getBuffer('image/jpeg', { quality: 50 })
+	} else {
+		throw new Boom('No image processing library available')
+	}
+
+	return {
+		/** Square cropped image for circle/thumbnail display */
+		img: await img,
+		/** Full panorama image for wide display */
+		fullImg: await fullImg
 	}
 }
 
@@ -330,12 +446,18 @@ export async function generateThumbnail(
 	mediaType: 'video' | 'image',
 	options: {
 		logger?: ILogger
+		/** HD mode - generate higher quality thumbnail */
+		hdMode?: boolean
 	}
 ) {
 	let thumbnail: string | undefined
 	let originalImageDimensions: { width: number; height: number } | undefined
+	
+	// For HD mode, generate higher quality thumbnails
+	const hdMode = options.hdMode === true
+	
 	if (mediaType === 'image') {
-		const { buffer, original } = await extractImageThumb(file)
+		const { buffer, original } = await extractImageThumb(file, hdMode)
 		thumbnail = buffer.toString('base64')
 		if (original.width && original.height) {
 			originalImageDimensions = {
@@ -346,7 +468,9 @@ export async function generateThumbnail(
 	} else if (mediaType === 'video') {
 		const imgFilename = join(getTmpFilesDirectory(), generateMessageIDV2() + '.jpg')
 		try {
-			await extractVideoThumb(file, imgFilename, '00:00:00', { width: 32, height: 32 })
+			// For HD mode, use larger thumbnail size
+			const thumbSize = hdMode ? { width: 320, height: 180 } : { width: 32, height: 32 }
+			await extractVideoThumb(file, imgFilename, '00:00:00', thumbSize)
 			const buff = await fs.readFile(imgFilename)
 			thumbnail = buff.toString('base64')
 

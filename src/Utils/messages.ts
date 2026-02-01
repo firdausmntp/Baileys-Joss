@@ -221,6 +221,8 @@ export const prepareWAMessageMedia = async (
 	}
 
 	const requiresDurationComputation = mediaType === 'audio' && typeof uploadData.seconds === 'undefined'
+	// Skip thumbnail compression for HD mode - generate higher quality thumbnail
+	const isHDMode = 'hd' in uploadData && uploadData.hd === true
 	const requiresThumbnailComputation =
 		(mediaType === 'image' || mediaType === 'video') && typeof uploadData['jpegThumbnail'] === 'undefined'
 	const requiresWaveformProcessing = mediaType === 'audio' && uploadData.ptt === true
@@ -250,10 +252,15 @@ export const prepareWAMessageMedia = async (
 		(async () => {
 			try {
 				if (requiresThumbnailComputation) {
+					// For HD mode, generate higher quality thumbnail or skip if preferred
 					const { thumbnail, originalImageDimensions } = await generateThumbnail(
 						originalFilePath!,
 						mediaType as 'image' | 'video',
-						options
+						{ 
+							...options,
+							// Pass HD mode flag for higher quality thumbnail
+							hdMode: isHDMode 
+						}
 					)
 					uploadData.jpegThumbnail = thumbnail
 					if (!uploadData.width && originalImageDimensions) {
@@ -262,7 +269,7 @@ export const prepareWAMessageMedia = async (
 						logger?.debug('set dimensions')
 					}
 
-					logger?.debug('generated thumbnail')
+					logger?.debug(isHDMode ? 'generated HD thumbnail' : 'generated thumbnail')
 				}
 
 				if (requiresDurationComputation) {

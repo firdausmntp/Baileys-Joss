@@ -1,8 +1,8 @@
 {
   "name": "baileys-joss",
   "type": "module",
-  "version": "1.0.1",
-  "description": "WhatsApp Web API with Interactive Buttons, List Messages, Albums, AI Messages, Polls, LID/SenderPn Plotting - A feature-rich Baileys fork",
+  "version": "1.0.2",
+  "description": "WhatsApp Web API with Interactive Buttons, List Messages, Albums, AI Messages, Polls, LID/SenderPn Plotting, Mini Games, Content Detection, Anti-Spam - A feature-rich Baileys fork",
   "keywords": [
     "whatsapp",
     "whatsapp-api",
@@ -16,7 +16,10 @@
     "lid-mapping",
     "automation",
     "chatbot",
-    "wa-bot"
+    "wa-bot",
+    "mini-games",
+    "anti-spam",
+    "content-detector"
   ],
   "homepage": "https://github.com/firdausmntp/Baileys-Joss#readme",
   "repository": {
