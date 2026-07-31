@@ -593,7 +593,7 @@ export const generateWAMessageContent = async (
 				m.pollCreationMessage = pollCreationMessage
 			}
 		}
-	} else if (hasNonNullishProperty(message, 'album')) {
+	} else if (hasNonNullishProperty(message, 'album') && !Array.isArray(message.album)) {
 		m.albumMessage = {
 			expectedImageCount: message.album.expectedImageCount,
 			expectedVideoCount: message.album.expectedVideoCount
